@@ -4,9 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>bubbl — Laundry Pickup & Delivery</title>
-  <meta name="description" content="Order laundry pickup & delivery. Live pricing, map-based address, and in‑app checkout.">
-  <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <meta name="description" content="Order laundry pickup & delivery. Live pricing, Google Maps address, and in‑app checkout.">
   <style>
     :root { color-scheme: light dark; --bg:#0f1115; --panel:#121826; --muted:#9aa4b2; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --shadow: 0 10px 30px rgba(0,0,0,.25); }
     * { box-sizing: border-box; }
@@ -42,8 +40,6 @@
     .items { display:flex; gap:8px; flex-wrap:wrap; }
     .item { display:flex; gap:8px; align-items:center; padding:8px 10px; border:1px solid rgba(255,255,255,.12); border-radius:10px; background: #0d1220; }
     .qty { width:64px; }
-    .footnote { font-size:11px; color:#9aa4b2; }
-    .badge { font-size:11px; color:#94a3b8; background:#0b1220; border:1px solid rgba(255,255,255,.10); padding:4px 8px; border-radius:999px; }
 
     @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } #map { height: 360px; } }
   </style>
@@ -52,7 +48,7 @@
   <header>
     <div class="wrap">
       <h1>🧺 bubbl</h1>
-      <p class="sub">Laundry pickup & delivery • Map-based address • Live pricing • In‑app checkout</p>
+      <p class="sub">Laundry pickup & delivery • Google Maps address • Live pricing • In‑app checkout</p>
     </div>
   </header>
 
@@ -65,22 +61,22 @@
           <div>
             <label for="search">Search address / building</label>
             <div class="row">
-              <input id="search" type="text" placeholder="e.g., Bangsar South, KL" />
-              <button class="btn secondary" id="btnSearch">Search</button>
+              <input id="search" type="text" placeholder="Start typing your address…" />
+              <button class="btn secondary" id="btnUsePin">Use map pin</button>
             </div>
-            <div id="suggestions" class="stack"></div>
+            <div class="muted">Autocomplete powered by Google Places. Drag the pin if needed.</div>
           </div>
           <div>
             <label>Distance from base <span class="muted">(Bangsar / PJ)</span></label>
-            <div><span class="pill" id="distanceKm">— km</span> <span class="badge" id="inArea">Checking…</span></div>
-            <div class="footnote">Service radius <span id="radiusKm">—</span> km. You can also drag the pin on the map.</div>
+            <div><span class="pill" id="distanceKm">— km</span> <span class="pill" id="inArea">Checking…</span></div>
+            <div class="muted">Service radius <span id="radiusKm">—</span> km.</div>
           </div>
         </div>
         <div id="map"></div>
         <div class="row" style="margin-top:10px;">
           <div>
             <label for="addr">Selected address</label>
-            <input id="addr" type="text" placeholder="Address from map/geocoder" />
+            <input id="addr" type="text" placeholder="Address" />
           </div>
           <div>
             <label for="latlng">Lat,Lng</label>
@@ -165,7 +161,7 @@
           <button class="btn" id="btnSubmit">🧺 Submit order</button>
           <button class="btn secondary" id="btnCopyJson">Copy order JSON</button>
         </div>
-        <div class="footnote" id="submitStatus" style="margin-top:6px;">No payment collected here. Totals are estimates; final bill confirmed after weighing/inspection.</div>
+        <div class="muted" id="submitStatus" style="margin-top:6px;">No payment collected here. Totals are estimates; final bill confirmed after weighing/inspection.</div>
       </section>
     </div>
 
@@ -185,13 +181,15 @@
     </section>
 
     <footer class="wrap" style="text-align:center; margin-top:16px; color:#94a3b8;">
-      <small>© <span id="year"></span> <span id="bizName"></span> • Built with OpenStreetMap + Leaflet • <a class="btn ghost" href="#" id="reset">Reset</a></small>
+      <small>© <span id="year"></span> <span id="bizName"></span> • Built with Google Maps Platform • <a class="btn ghost" href="#" id="reset">Reset</a></small>
     </footer>
   </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Google Maps JS API: replace YOUR_GOOGLE_MAPS_API_KEY. We use Places + Geometry libraries. -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=places,geometry&callback=initMap"></script>
+
   <script>
-    // --- CONFIG: tailor to your shop ---
+    // --- CONFIG ---
     const CONFIG = {
       business: {
         name: "bubbl",
@@ -205,31 +203,20 @@
         ironingPerItem: 1.0,
         dryClean: { Shirt: 8, Pants: 10, Dress: 15, Suit: 35, Bedsheet: 12 },
         pickupFeeBase: 2.0,
-        pickupFeeFreeKm: 0, // no free km specified
+        pickupFeeFreeKm: 0,
         pickupFeePerKm: 0.5,
         minOrder: 30,
         promoCodes: { }
       },
-      backend: {
-        submitUrl: "https://your-backend.example.com/api/orders" // TODO: replace with your real endpoint
-      },
+      backend: { submitUrl: "https://your-backend.example.com/api/orders" },
       ui: { locale: "en-MY" }
     };
 
     // --- helpers ---
     const fmt = new Intl.NumberFormat(CONFIG.ui.locale || 'en-MY', { style: 'currency', currency: CONFIG.pricing.currency });
     const money = v => { try { return fmt.format(v); } catch(e) { return `${CONFIG.pricing.symbol} ${(+v).toFixed(2)}`; } };
-    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-    const haversineKm = (a, b) => {
-      const toRad = d => d * Math.PI / 180;
-      const R = 6371;
-      const dLat = toRad(b.lat - a.lat);
-      const dLng = toRad(b.lng - a.lng);
-      const s1 = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
-      return 2 * R * Math.asin(Math.sqrt(s1));
-    };
     const q = sel => document.querySelector(sel);
-    const el = (tag, attrs={}, children=[]) => { const n=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=> n[k]=v); children.forEach(c=> n.appendChild(c)); return n; };
+    const round2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
 
     // --- state ---
     const state = {
@@ -237,91 +224,123 @@
       address: '',
       service: 'washfold',
       kg: 5,
-      items: {}, // { "Shirt": 2, ... }
-      promo: '',
+      items: {},
       fragile: 'No'
     };
 
-    // --- map init ---
-    let map, marker, circle;
+    // --- Google Maps objects ---
+    let gmap, gmarker, gcircle, geocoder, autocomplete;
+
+    // initMap is the Google callback
     function initMap(){
       q('#radiusKm').textContent = CONFIG.business.serviceRadiusKm;
-      map = L.map('map').setView([CONFIG.business.base.lat, CONFIG.business.base.lng], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-      }).addTo(map);
-      circle = L.circle([CONFIG.business.base.lat, CONFIG.business.base.lng], {
-        radius: CONFIG.business.serviceRadiusKm * 1000,
-        color: '#3b82f6', fillColor:'#3b82f6', fillOpacity: .1
-      }).addTo(map);
-      marker = L.marker([state.pos.lat, state.pos.lng], { draggable: true }).addTo(map);
-      marker.on('dragend', async (e)=>{
-        const {lat, lng} = e.target.getLatLng();
-        state.pos = { lat, lng };
-        q('#latlng').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-        await reverseGeocode(lat, lng);
-        recalc();
+
+      geocoder = new google.maps.Geocoder();
+      gmap = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: CONFIG.business.base.lat, lng: CONFIG.business.base.lng },
+        zoom: 13,
+        mapTypeControl: false,
+        fullscreenControl: false,
       });
-      map.on('click', async (e)=>{
-        marker.setLatLng(e.latlng);
-        state.pos = { lat:e.latlng.lat, lng:e.latlng.lng };
+
+      // circle (service radius)
+      gcircle = new google.maps.Circle({
+        strokeColor: '#3b82f6', strokeOpacity: 0.9, strokeWeight: 1,
+        fillColor: '#3b82f6', fillOpacity: 0.1,
+        map: gmap,
+        center: CONFIG.business.base,
+        radius: CONFIG.business.serviceRadiusKm * 1000
+      });
+
+      // marker
+      gmarker = new google.maps.Marker({
+        position: state.pos,
+        map: gmap,
+        draggable: true,
+        title: 'Pickup location'
+      });
+
+      gmarker.addListener('dragend', async ()=> {
+        const p = gmarker.getPosition();
+        state.pos = { lat: p.lat(), lng: p.lng() };
         q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
-        await reverseGeocode(state.pos.lat, state.pos.lng);
+        await reverseGeocode(state.pos);
         recalc();
       });
-      // set defaults
+
+      gmap.addListener('click', async (e)=>{
+        gmarker.setPosition(e.latLng);
+        state.pos = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+        q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
+        await reverseGeocode(state.pos);
+        recalc();
+      });
+
+      // Places Autocomplete
+      const input = document.getElementById('search');
+      autocomplete = new google.maps.places.Autocomplete(input, { fields: ['geometry','formatted_address','name'] });
+      autocomplete.addListener('place_changed', ()=>{
+        const place = autocomplete.getPlace();
+        if(!place.geometry) return;
+        const loc = place.geometry.location;
+        const lat = loc.lat(), lng = loc.lng();
+        state.pos = { lat, lng };
+        gmap.setCenter(loc);
+        gmap.setZoom(15);
+        gmarker.setPosition(loc);
+        q('#addr').value = place.formatted_address || place.name || '';
+        q('#latlng').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        recalc();
+      });
+
+      // Use pin button
+      q('#btnUsePin').onclick = async ()=>{
+        const p = gmarker.getPosition();
+        state.pos = { lat: p.lat(), lng: p.lng() };
+        q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
+        await reverseGeocode(state.pos);
+        recalc();
+      };
+
+      // defaults
       q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
-      reverseGeocode(state.pos.lat, state.pos.lng);
+      reverseGeocode(state.pos);
+      syncUIFromConfig();
+      buildItemChips();
+      bindEvents();
+      switchBlocks();
       recalc();
     }
 
-    // --- geocode ---
-    async function geocode(qstr){
-      if(!qstr) return;
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(qstr)}`;
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
-      if(!res.ok) return;
-      const list = await res.json();
-      const host = q('#suggestions'); host.innerHTML='';
-      list.forEach(item=>{
-        const btn = el('button', { className:'btn secondary', innerText: item.display_name });
-        btn.style.width = '100%'; btn.style.marginTop = '6px';
-        btn.onclick = ()=>{
-          const lat = parseFloat(item.lat), lng = parseFloat(item.lon);
-          state.pos = { lat, lng };
-          marker.setLatLng([lat,lng]);
-          map.setView([lat,lng], 14);
-          q('#addr').value = item.display_name;
-          q('#latlng').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-          host.innerHTML='';
-          recalc();
-        };
-        host.appendChild(btn);
+    async function reverseGeocode(pos){
+      return new Promise((resolve)=>{
+        geocoder.geocode({ location: pos }, (results, status)=>{
+          if(status === 'OK' && results && results[0]){
+            q('#addr').value = results[0].formatted_address;
+          }
+          resolve();
+        });
       });
     }
 
-    async function reverseGeocode(lat, lng){
-      try{
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-        const res = await fetch(url);
-        const data = await res.json();
-        q('#addr').value = data.display_name || '';
-      }catch(e){ /* ignore */ }
+    function haversineKmGoogle(a, b){
+      const p1 = new google.maps.LatLng(a.lat, a.lng);
+      const p2 = new google.maps.LatLng(b.lat, b.lng);
+      const meters = google.maps.geometry.spherical.computeDistanceBetween(p1, p2);
+      return Math.round((meters/1000) * 100) / 100; // 2dp
     }
 
-    // --- pricing logic ---
+    // pricing helpers
     function pickupFeeForDistance(km){
       const { pickupFeeBase, pickupFeeFreeKm, pickupFeePerKm } = CONFIG.pricing;
       const extraKm = Math.max(0, km - pickupFeeFreeKm);
       return round2(pickupFeeBase + extraKm * pickupFeePerKm);
     }
-    function round2(v){ return Math.round((v + Number.EPSILON) * 100) / 100; }
 
     function buildLines(){
       const lines = [];
       if(state.service === 'washfold'){
-        const qty = clamp(parseFloat(q('#kg').value||'0'), 0, 200);
+        const qty = Math.max(0, parseFloat(q('#kg').value||'0'));
         state.kg = qty;
         const rate = CONFIG.pricing.washFoldPerKg;
         const base = round2(qty * rate);
@@ -331,7 +350,6 @@
         if(final === min) lines.push([`Min order top-up`, 0]);
         if(q('#fragile').value === 'Yes') lines.push([`Delicates (separate bag)`, 0]);
       } else {
-        // per-item
         const dict = state.items;
         const priceMap = state.service === 'ironing' ? null : CONFIG.pricing.dryClean;
         const perItemDefault = state.service === 'ironing' ? CONFIG.pricing.ironingPerItem : 0;
@@ -353,14 +371,14 @@
     }
 
     function recalc(){
-      // distance & service area
-      const km = round2(haversineKm(CONFIG.business.base, state.pos));
+      // distance
+      const km = haversineKmGoogle(CONFIG.business.base, state.pos);
       q('#distanceKm').textContent = `${km} km`;
       const inArea = km <= CONFIG.business.serviceRadiusKm;
       q('#inArea').textContent = inArea ? 'In service area' : 'Outside service area';
-      q('#inArea').className = 'badge ' + (inArea ? 'ok' : 'warn');
+      q('#inArea').className = 'pill ' + (inArea ? 'ok' : 'warn');
 
-      // line items
+      // line items & totals
       const lines = buildLines();
       const body = q('#lines'); body.innerHTML='';
       let subtotal = 0;
@@ -371,22 +389,17 @@
         body.appendChild(tr);
         subtotal += amt;
       });
-
       const pickup = pickupFeeForDistance(km);
       const total = round2(Math.max(0, subtotal + pickup));
-
       q('#pickupFee').textContent = money(pickup);
       q('#grand').textContent = money(total);
 
-      // persist basics
-      localStorage.setItem('qw_state', JSON.stringify({ pos: state.pos, address: q('#addr').value }));
+      localStorage.setItem('bubbl_state', JSON.stringify({ pos: state.pos, address: q('#addr').value }));
     }
 
     function syncUIFromConfig(){
-      // header/footer
       q('#bizName').textContent = CONFIG.business.name;
       q('#year').textContent = new Date().getFullYear();
-      // pricing chips
       q('#p_wf').textContent = money(CONFIG.pricing.washFoldPerKg);
       q('#p_ir').textContent = money(CONFIG.pricing.ironingPerItem);
       q('#p_pb').textContent = money(CONFIG.pricing.pickupFeeBase);
@@ -427,7 +440,7 @@
     }
 
     function currentOrderJson(){
-      const km = round2(haversineKm(CONFIG.business.base, state.pos));
+      const km = haversineKmGoogle(CONFIG.business.base, state.pos);
       const summaryLines = buildLines();
       const subtotal = summaryLines.reduce((s, [,amt])=> s+amt, 0);
       const pickup = pickupFeeForDistance(km);
@@ -475,16 +488,13 @@
       });
     }
 
-    // --- events ---
     function bindEvents(){
-      q('#btnSearch').onclick = ()=> geocode(q('#search').value);
-      q('#search').addEventListener('keydown', e=>{ if(e.key==='Enter'){ geocode(q('#search').value); }});
       q('#addr').oninput = ()=>{ state.address = q('#addr').value; };
       q('#latlng').onchange = ()=>{
         const [lat,lng] = q('#latlng').value.split(',').map(s=> parseFloat(s.trim()));
         if(isFinite(lat)&&isFinite(lng)){
           state.pos = { lat, lng };
-          marker.setLatLng([lat,lng]); map.setView([lat,lng], 14); recalc();
+          gmarker.setPosition(state.pos); gmap.setCenter(state.pos); gmap.setZoom(15); recalc();
         }
       };
       q('#service').onchange = switchBlocks;
@@ -498,23 +508,8 @@
         state.items[name] = (state.items[name]||0)+1;
         buildItemChips(); recalc();
       };
-      q('#reset').onclick = (e)=>{ e.preventDefault(); localStorage.removeItem('qw_state'); location.reload(); };
+      q('#reset').onclick = (e)=>{ e.preventDefault(); localStorage.removeItem('bubbl_state'); location.reload(); };
     }
-
-    // --- boot ---
-    (function boot(){
-      syncUIFromConfig();
-      buildItemChips();
-      bindEvents();
-      // restore last position if any
-      try{
-        const saved = JSON.parse(localStorage.getItem('qw_state')||'null');
-        if(saved && saved.pos){ state.pos = saved.pos; state.address = saved.address||''; }
-        if(state.address) q('#addr').value = state.address;
-      }catch(e){ /* ignore */ }
-      initMap();
-      switchBlocks();
-    })();
   </script>
 </body>
 </html>
