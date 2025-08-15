@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuickWash KL — Laundry Pickup & Delivery</title>
+  <meta name="description" content="Order laundry pickup & delivery. Live pricing, map-based address, and WhatsApp checkout.">
+  <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <style>
+    :root { color-scheme: light dark; --bg:#0f1115; --panel:#121826; --muted:#9aa4b2; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --shadow: 0 10px 30px rgba(0,0,0,.25); }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background: var(--bg); color:#fff; }
+    header { position: sticky; top:0; z-index:10; backdrop-filter: blur(10px); background:rgba(17,24,39,.75); border-bottom:1px solid rgba(255,255,255,.06); }
+    .wrap { max-width:1200px; margin:0 auto; padding:16px; }
+    h1 { font-size: clamp(20px, 3vw, 32px); margin:4px 0; }
+    h2 { font-size:20px; margin:16px 0 8px; }
+    p.sub { color: var(--muted); margin:0; }
+    .grid { display:grid; grid-template-columns: 1.1fr .9fr; gap:16px; }
+    .card { background: var(--panel); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:16px; box-shadow: var(--shadow); }
+    #map { height: 460px; border-radius:12px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .row > * { flex:1; }
+    label { font-size:13px; color: #cbd5e1; display:block; margin:6px 0 4px; }
+    input[type="text"], input[type="tel"], input[type="number"], input[type="datetime-local"], select, textarea { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.1); background:#0d1220; color:#fff; }
+    textarea { min-height:68px; }
+    .muted { color: var(--muted); font-size:12px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:10px 14px; border-radius:999px; border:1px solid transparent; background: var(--accent); color:#fff; cursor:pointer; font-weight:600; text-decoration:none; }
+    .btn.secondary { background:transparent; border-color: rgba(255,255,255,.18); }
+    .btn.ghost { background:transparent; color:#fff; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1f2937; color:#cbd5e1; font:12px ui-monospace; margin-right:6px; }
+    .divider { height:1px; background: rgba(255,255,255,.08); margin:12px 0; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:8px; border-bottom:1px dashed rgba(255,255,255,.08); }
+    tfoot td { border-bottom:none; }
+    .right { text-align:right; }
+    .warn { color: var(--warn); }
+    .err { color: var(--err); }
+    .ok { color: var(--ok); }
+    .stack { display:flex; flex-direction:column; gap:12px; }
+    .items { display:flex; gap:8px; flex-wrap:wrap; }
+    .item { display:flex; gap:8px; align-items:center; padding:8px 10px; border:1px solid rgba(255,255,255,.12); border-radius:10px; background: #0d1220; }
+    .qty { width:64px; }
+    .footnote { font-size:11px; color:#9aa4b2; }
+    .badge { font-size:11px; color:#94a3b8; background:#0b1220; border:1px solid rgba(255,255,255,.10); padding:4px 8px; border-radius:999px; }
+
+    @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } #map { height: 360px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>🧺 QuickWash KL</h1>
+      <p class="sub">Laundry pickup & delivery • Map-based address • Live pricing • WhatsApp checkout</p>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-top:16px; padding-bottom:40px;">
+    <div class="grid">
+      <!-- LEFT: Map & Address -->
+      <section class="card">
+        <h2>1) Set your pickup address</h2>
+        <div class="row">
+          <div>
+            <label for="search">Search address / building</label>
+            <div class="row">
+              <input id="search" type="text" placeholder="e.g., Bangsar South, KL" />
+              <button class="btn secondary" id="btnSearch">Search</button>
+            </div>
+            <div id="suggestions" class="stack"></div>
+          </div>
+          <div>
+            <label>Distance from base <span class="muted">(Cheras Alam Damai)</span></label>
+            <div><span class="pill" id="distanceKm">— km</span> <span class="badge" id="inArea">Checking…</span></div>
+            <div class="footnote">Service radius <span id="radiusKm">—</span> km. You can also drag the pin on the map.</div>
+          </div>
+        </div>
+        <div id="map"></div>
+        <div class="row" style="margin-top:10px;">
+          <div>
+            <label for="addr">Selected address</label>
+            <input id="addr" type="text" placeholder="Address from map/geocoder" />
+          </div>
+          <div>
+            <label for="latlng">Lat,Lng</label>
+            <input id="latlng" type="text" placeholder="3.0,101.0" />
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT: Customer & Order -->
+      <section class="card">
+        <h2>2) Your details</h2>
+        <div class="row">
+          <div>
+            <label for="custName">Full name</label>
+            <input id="custName" type="text" placeholder="Your name" />
+          </div>
+          <div>
+            <label for="custPhone">Phone (WhatsApp)</label>
+            <input id="custPhone" type="tel" placeholder="e.g., 60123456789" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="pickupAt">Preferred pickup</label>
+            <input id="pickupAt" type="datetime-local" />
+          </div>
+          <div>
+            <label for="speed">Speed</label>
+            <select id="speed">
+              <option value="standard">Standard (24–48h)</option>
+              <option value="express">Express (same/next day)</option>
+            </select>
+          </div>
+        </div>
+        <label for="notes">Notes for rider</label>
+        <textarea id="notes" placeholder="Gate code, unit number, special care, etc."></textarea>
+        <div class="divider"></div>
+        <h2>3) Order & pricing</h2>
+        <div class="row">
+          <div>
+            <label for="service">Service</label>
+            <select id="service">
+              <option value="washfold">Wash & Fold (per kg)</option>
+              <option value="ironing">Ironing (per item)</option>
+              <option value="dryclean">Dry Cleaning (per item)</option>
+            </select>
+          </div>
+          <div>
+            <label for="promo">Promo code</label>
+            <input id="promo" type="text" placeholder="e.g., WELCOME5" />
+          </div>
+        </div>
+
+        <!-- Wash & Fold block -->
+        <div id="block-washfold" class="stack" style="margin-top:8px;">
+          <div class="row">
+            <div>
+              <label for="kg">Weight (kg)</label>
+              <input id="kg" type="number" min="1" step="0.5" value="5" />
+              <div class="muted">Rate: <span id="rateKg">—</span> / kg • Min order: <span id="minOrder">—</span></div>
+            </div>
+            <div>
+              <label for="fragile">Separate delicates?</label>
+              <select id="fragile"><option>No</option><option>Yes</option></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Per-item blocks -->
+        <div id="block-items" class="stack" style="display:none; margin-top:8px;">
+          <div class="items" id="items"></div>
+          <div class="row">
+            <button class="btn secondary" id="addItem">+ Add custom item</button>
+            <span class="muted">Tap + / – to adjust quantities.</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <table>
+          <thead>
+            <tr><th>Line item</th><th class="right">Amount</th></tr>
+          </thead>
+          <tbody id="lines"></tbody>
+          <tfoot>
+            <tr><td class="right">Pickup fee</td><td class="right" id="pickupFee">—</td></tr>
+            <tr><td class="right">Express surcharge</td><td class="right" id="expressFee">—</td></tr>
+            <tr><td class="right">Promo</td><td class="right" id="promoAmt">—</td></tr>
+            <tr><td class="right"><strong>Total</strong></td><td class="right" id="grand"><strong>—</strong></td></tr>
+          </tfoot>
+        </table>
+
+        <div class="row" style="margin-top:10px;">
+          <a class="btn" id="btnWhatsApp" target="_blank" rel="noreferrer noopener">📲 Place order on WhatsApp</a>
+          <button class="btn secondary" id="btnCopyJson">Copy order JSON</button>
+        </div>
+        <div class="footnote" style="margin-top:6px;">No payment collected here. Totals are estimates; final bill confirmed after weighing/inspection.</div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px;">
+      <h2>Pricing</h2>
+      <div class="row">
+        <div>
+          <div class="pill">Wash & Fold: <span id="p_wf"></span> / kg</div>
+          <div class="pill">Ironing: from <span id="p_ir"></span> / item</div>
+          <div class="pill">Pickup base: <span id="p_pb"></span> (first 3 km), then <span id="p_pk"></span> / km</div>
+          <div class="pill">Express x<span id="p_x"></span></div>
+          <div class="pill">Min order: <span id="p_min"></span></div>
+        </div>
+        <div>
+          <div class="muted">Dry-clean guide (each): Shirt <span id="p_dc_shirt"></span>, Pants <span id="p_dc_pants"></span>, Dress <span id="p_dc_dress"></span>, Suit <span id="p_dc_suit"></span>, Bedsheet <span id="p_dc_sheet"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="wrap" style="text-align:center; margin-top:16px; color:#94a3b8;">
+      <small>© <span id="year"></span> <span id="bizName"></span> • Built with OpenStreetMap + Leaflet • <a class="btn ghost" href="#" id="reset">Reset</a></small>
+    </footer>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    // --- CONFIG: tailor to your shop ---
+    const CONFIG = {
+      business: {
+        name: "QuickWash KL",
+        phone: "60123456789", // WhatsApp number without +
+        base: { lat: 3.0848, lng: 101.7505, label: "Cheras, Alam Damai" },
+        serviceRadiusKm: 12
+      },
+      pricing: {
+        currency: "MYR",
+        symbol: "RM",
+        washFoldPerKg: 7.0,
+        ironingPerItem: 2.5,
+        dryClean: { Shirt: 8, Pants: 10, Dress: 15, Suit: 35, Bedsheet: 12 },
+        pickupFeeBase: 3.0, // includes first 3km
+        pickupFeeFreeKm: 3,
+        pickupFeePerKm: 0.8, // beyond free km
+        expressMultiplier: 1.5,
+        minOrder: 12,
+        promoCodes: { WELCOME5: 5 }
+      },
+      ui: { locale: "en-MY" }
+    };
+
+    // --- helpers ---
+    const fmt = new Intl.NumberFormat(CONFIG.ui.locale || 'en-MY', { style: 'currency', currency: CONFIG.pricing.currency });
+    const money = v => {
+      try { return fmt.format(v); } catch(e) { return `${CONFIG.pricing.symbol} ${v.toFixed(2)}`; }
+    };
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const haversineKm = (a, b) => {
+      const toRad = d => d * Math.PI / 180;
+      const R = 6371;
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const s1 = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+      return 2 * R * Math.asin(Math.sqrt(s1));
+    };
+    const q = sel => document.querySelector(sel);
+    const el = (tag, attrs={}, children=[]) => { const n=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=> n[k]=v); children.forEach(c=> n.appendChild(c)); return n; };
+
+    // --- state ---
+    const state = {
+      pos: { lat: CONFIG.business.base.lat, lng: CONFIG.business.base.lng },
+      address: '',
+      service: 'washfold',
+      kg: 5,
+      items: {}, // { "Shirt": 2, ... }
+      speed: 'standard',
+      promo: '',
+      fragile: 'No'
+    };
+
+    // --- map init ---
+    let map, marker, circle;
+    function initMap(){
+      q('#radiusKm').textContent = CONFIG.business.serviceRadiusKm;
+      map = L.map('map').setView([CONFIG.business.base.lat, CONFIG.business.base.lng], 12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+      circle = L.circle([CONFIG.business.base.lat, CONFIG.business.base.lng], {
+        radius: CONFIG.business.serviceRadiusKm * 1000,
+        color: '#3b82f6', fillColor:'#3b82f6', fillOpacity: .1
+      }).addTo(map);
+      marker = L.marker([state.pos.lat, state.pos.lng], { draggable: true }).addTo(map);
+      marker.on('dragend', async (e)=>{
+        const {lat, lng} = e.target.getLatLng();
+        state.pos = { lat, lng };
+        q('#latlng').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        await reverseGeocode(lat, lng);
+        recalc();
+      });
+      map.on('click', async (e)=>{
+        marker.setLatLng(e.latlng);
+        state.pos = { lat:e.latlng.lat, lng:e.latlng.lng };
+        q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
+        await reverseGeocode(state.pos.lat, state.pos.lng);
+        recalc();
+      });
+      // set defaults
+      q('#latlng').value = `${state.pos.lat.toFixed(6)}, ${state.pos.lng.toFixed(6)}`;
+      reverseGeocode(state.pos.lat, state.pos.lng);
+      recalc();
+    }
+
+    // --- geocode ---
+    async function geocode(qstr){
+      if(!qstr) return;
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(qstr)}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' }});
+      if(!res.ok) return;
+      const list = await res.json();
+      const host = q('#suggestions'); host.innerHTML='';
+      list.forEach(item=>{
+        const btn = el('button', { className:'btn secondary', innerText: item.display_name });
+        btn.style.width = '100%'; btn.style.marginTop = '6px';
+        btn.onclick = ()=>{
+          const lat = parseFloat(item.lat), lng = parseFloat(item.lon);
+          state.pos = { lat, lng };
+          marker.setLatLng([lat,lng]);
+          map.setView([lat,lng], 14);
+          q('#addr').value = item.display_name;
+          q('#latlng').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          host.innerHTML='';
+          recalc();
+        };
+        host.appendChild(btn);
+      });
+    }
+
+    async function reverseGeocode(lat, lng){
+      try{
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        q('#addr').value = data.display_name || '';
+      }catch(e){ /* ignore */ }
+    }
+
+    // --- pricing logic ---
+    function pickupFeeForDistance(km){
+      const { pickupFeeBase, pickupFeeFreeKm, pickupFeePerKm } = CONFIG.pricing;
+      const extraKm = Math.max(0, km - pickupFeeFreeKm);
+      return round2(pickupFeeBase + extraKm * pickupFeePerKm);
+    }
+    function round2(v){ return Math.round((v + Number.EPSILON) * 100) / 100; }
+
+    function buildLines(){
+      const lines = [];
+      if(state.service === 'washfold'){
+        const qty = clamp(parseFloat(q('#kg').value||'0'), 0, 200);
+        state.kg = qty;
+        const rate = CONFIG.pricing.washFoldPerKg;
+        const base = round2(qty * rate);
+        const min = CONFIG.pricing.minOrder;
+        const final = round2(Math.max(base, min));
+        lines.push([`Wash & Fold — ${qty} kg @ ${money(rate)} / kg`, final]);
+        if(final === min) lines.push([`Min order top-up`, 0]);
+        if(q('#fragile').value === 'Yes') lines.push([`Delicates (separate bag)`, 0]);
+      } else {
+        // per-item
+        const dict = state.items;
+        const priceMap = state.service === 'ironing' ? null : CONFIG.pricing.dryClean;
+        const perItemDefault = state.service === 'ironing' ? CONFIG.pricing.ironingPerItem : 0;
+        let subtotal = 0, count = 0;
+        Object.entries(dict).forEach(([name, qty])=>{
+          if(!qty) return;
+          const unit = state.service === 'ironing' ? (perItemDefault) : (priceMap[name] || 0);
+          const lineAmt = round2(unit * qty);
+          subtotal += lineAmt; count += qty;
+          lines.push([`${name} × ${qty} @ ${money(unit)}`, lineAmt]);
+        });
+        if(count===0) lines.push([`No items added yet`, 0]);
+        if(subtotal < CONFIG.pricing.minOrder){
+          const top = round2(CONFIG.pricing.minOrder - subtotal);
+          if(top>0) lines.push([`Min order top-up`, top]);
+        }
+      }
+      return lines;
+    }
+
+    function recalc(){
+      // distance & service area
+      const km = round2(haversineKm(CONFIG.business.base, state.pos));
+      q('#distanceKm').textContent = `${km} km`;
+      const inArea = km <= CONFIG.business.serviceRadiusKm;
+      q('#inArea').textContent = inArea ? 'In service area' : 'Outside service area';
+      q('#inArea').className = 'badge ' + (inArea ? 'ok' : 'warn');
+
+      // line items
+      const lines = buildLines();
+      const body = q('#lines'); body.innerHTML='';
+      let subtotal = 0;
+      lines.forEach(([label, amt])=>{
+        const tr = document.createElement('tr');
+        const td1 = document.createElement('td'); td1.textContent = label; tr.appendChild(td1);
+        const td2 = document.createElement('td'); td2.className='right'; td2.textContent = money(amt); tr.appendChild(td2);
+        body.appendChild(tr);
+        subtotal += amt;
+      });
+
+      const pickup = pickupFeeForDistance(km);
+      const isExpress = q('#speed').value === 'express';
+      const express = isExpress ? round2((subtotal + pickup) * (CONFIG.pricing.expressMultiplier - 1)) : 0;
+      const promoCode = (q('#promo').value || '').trim().toUpperCase();
+      const promo = CONFIG.pricing.promoCodes[promoCode] ? CONFIG.pricing.promoCodes[promoCode] : 0;
+
+      const total = round2(Math.max(0, subtotal + pickup + express - promo));
+
+      q('#pickupFee').textContent = money(pickup);
+      q('#expressFee').textContent = isExpress ? money(express) : money(0);
+      q('#promoAmt').textContent = promo>0 ? `− ${money(promo)}` : money(0);
+      q('#grand').textContent = money(total);
+
+      // persist basics
+      localStorage.setItem('qw_state', JSON.stringify({ pos: state.pos, address: q('#addr').value }));
+    }
+
+    function syncUIFromConfig(){
+      // header/footer
+      q('#bizName').textContent = CONFIG.business.name;
+      q('#year').textContent = new Date().getFullYear();
+      // pricing chips
+      q('#p_wf').textContent = money(CONFIG.pricing.washFoldPerKg);
+      q('#p_ir').textContent = money(CONFIG.pricing.ironingPerItem);
+      q('#p_pb').textContent = money(CONFIG.pricing.pickupFeeBase);
+      q('#p_pk').textContent = money(CONFIG.pricing.pickupFeePerKm);
+      q('#p_x').textContent = CONFIG.pricing.expressMultiplier;
+      q('#p_min').textContent = money(CONFIG.pricing.minOrder);
+      q('#p_dc_shirt').textContent = money(CONFIG.pricing.dryClean.Shirt);
+      q('#p_dc_pants').textContent = money(CONFIG.pricing.dryClean.Pants);
+      q('#p_dc_dress').textContent = money(CONFIG.pricing.dryClean.Dress);
+      q('#p_dc_suit').textContent = money(CONFIG.pricing.dryClean.Suit);
+      q('#p_dc_sheet').textContent = money(CONFIG.pricing.dryClean.Bedsheet);
+      q('#rateKg').textContent = money(CONFIG.pricing.washFoldPerKg);
+      q('#minOrder').textContent = money(CONFIG.pricing.minOrder);
+    }
+
+    function buildItemChips(){
+      const itemsHost = q('#items'); itemsHost.innerHTML='';
+      const catalog = new Set(['Shirt','Pants','Dress','Suit','Bedsheet','Towel','Curtain']);
+      // include any configured dry-clean keys
+      Object.keys(CONFIG.pricing.dryClean).forEach(k=> catalog.add(k));
+      [...catalog].forEach(name=>{
+        const chip = document.createElement('div'); chip.className='item';
+        const label = document.createElement('span'); label.textContent = name; chip.appendChild(label);
+        const minus = document.createElement('button'); minus.className='btn secondary'; minus.textContent='–';
+        const input = document.createElement('input'); input.type='number'; input.min='0'; input.step='1'; input.value= state.items[name]||0; input.className='qty';
+        const plus = document.createElement('button'); plus.className='btn secondary'; plus.textContent='+';
+        minus.onclick = ()=>{ input.value = Math.max(0, parseInt(input.value||'0')-1); state.items[name]=parseInt(input.value)||0; recalc(); };
+        plus.onclick  = ()=>{ input.value = (parseInt(input.value||'0')+1); state.items[name]=parseInt(input.value)||0; recalc(); };
+        input.oninput = ()=>{ state.items[name]=parseInt(input.value)||0; recalc(); };
+        chip.appendChild(minus); chip.appendChild(input); chip.appendChild(plus);
+        itemsHost.appendChild(chip);
+      });
+    }
+
+    function switchBlocks(){
+      const svc = q('#service').value; state.service = svc;
+      q('#block-washfold').style.display = svc==='washfold' ? 'block' : 'none';
+      q('#block-items').style.display   = svc!=='washfold' ? 'block' : 'none';
+      recalc();
+    }
+
+    function buildWhatsAppLink(){
+      const lines = [];
+      const addr = (q('#addr').value||'').trim();
+      const { lat, lng } = state.pos;
+      lines.push(`New laundry order — ${CONFIG.business.name}`);
+      lines.push(`Name: ${q('#custName').value || '-'}`);
+      lines.push(`Phone: ${q('#custPhone').value || '-'}`);
+      lines.push(`Pickup: ${q('#pickupAt').value || '-'}`);
+      lines.push(`Speed: ${q('#speed').value}`);
+      lines.push(`Address: ${addr}`);
+      lines.push(`Map: https://maps.google.com/?q=${lat},${lng}`);
+      lines.push(`\nItems:`);
+      const lineEls = q('#lines').querySelectorAll('tr');
+      lineEls.forEach(tr=>{
+        const tds = tr.querySelectorAll('td');
+        if(tds.length===2) lines.push(`- ${tds[0].textContent} — ${tds[1].textContent}`);
+      });
+      lines.push(`\nNotes: ${(q('#notes').value||'-').trim()}`);
+      const msg = encodeURIComponent(lines.join('\n'));
+      return `https://wa.me/${CONFIG.business.phone}?text=${msg}`;
+    }
+
+    function currentOrderJson(){
+      const km = round2(haversineKm(CONFIG.business.base, state.pos));
+      const summaryLines = buildLines();
+      const subtotal = summaryLines.reduce((s, [,amt])=> s+amt, 0);
+      const pickup = pickupFeeForDistance(km);
+      const isExpress = q('#speed').value === 'express';
+      const express = isExpress ? round2((subtotal + pickup) * (CONFIG.pricing.expressMultiplier - 1)) : 0;
+      const promoCode = (q('#promo').value||'').trim().toUpperCase();
+      const promo = CONFIG.pricing.promoCodes[promoCode] || 0;
+      const total = round2(Math.max(0, subtotal + pickup + express - promo));
+      return {
+        business: CONFIG.business,
+        customer: {
+          name: q('#custName').value,
+          phone: q('#custPhone').value,
+          address: q('#addr').value,
+          latlng: state.pos,
+          pickupAt: q('#pickupAt').value,
+          speed: q('#speed').value,
+          notes: q('#notes').value
+        },
+        service: state.service,
+        items: state.service==='washfold' ? { kg: state.kg, fragile: q('#fragile').value } : state.items,
+        pricing: CONFIG.pricing,
+        summary: { lines: summaryLines, pickup, express, promo, total, currency: CONFIG.pricing.currency, symbol: CONFIG.pricing.symbol }
+      };
+    }
+
+    function copyOrderJson(){
+      const json = JSON.stringify(currentOrderJson(), null, 2);
+      navigator.clipboard.writeText(json).then(()=>{
+        alert('Order JSON copied to clipboard');
+      });
+    }
+
+    // --- events ---
+    function bindEvents(){
+      q('#btnSearch').onclick = ()=> geocode(q('#search').value);
+      q('#search').addEventListener('keydown', e=>{ if(e.key==='Enter'){ geocode(q('#search').value); }});
+      q('#addr').oninput = ()=>{ state.address = q('#addr').value; };
+      q('#latlng').onchange = ()=>{
+        const [lat,lng] = q('#latlng').value.split(',').map(s=> parseFloat(s.trim()));
+        if(isFinite(lat)&&isFinite(lng)){
+          state.pos = { lat, lng };
+          marker.setLatLng([lat,lng]); map.setView([lat,lng], 14); recalc();
+        }
+      };
+      q('#service').onchange = switchBlocks;
+      q('#kg').oninput = recalc;
+      q('#fragile').onchange = recalc;
+      q('#speed').onchange = recalc;
+      q('#promo').oninput = recalc;
+      q('#btnWhatsApp').onclick = (e)=>{ e.currentTarget.href = buildWhatsAppLink(); };
+      q('#btnCopyJson').onclick = copyOrderJson;
+      q('#addItem').onclick = ()=>{
+        const name = prompt('Item name (e.g., Blanket)');
+        if(!name) return;
+        state.items[name] = (state.items[name]||0)+1;
+        buildItemChips(); recalc();
+      };
+      q('#reset').onclick = (e)=>{ e.preventDefault(); localStorage.removeItem('qw_state'); location.reload(); };
+    }
+
+    // --- boot ---
+    (function boot(){
+      syncUIFromConfig();
+      buildItemChips();
+      bindEvents();
+      // restore last position if any
+      try{
+        const saved = JSON.parse(localStorage.getItem('qw_state')||'null');
+        if(saved && saved.pos){ state.pos = saved.pos; state.address = saved.address||''; }
+        if(state.address) q('#addr').value = state.address;
+      }catch(e){ /* ignore */ }
+      initMap();
+      switchBlocks();
+    })();
+  </script>
+</body>
+</html>
