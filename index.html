@@ -163,6 +163,7 @@
         <div class="row" style="margin-top:10px;">
           <button class="btn" id="btnSubmit">🧺 Submit order</button>
           <button class="btn secondary" id="btnCopyJson">Copy order JSON</button>
+          <button class="btn secondary" id="btnEmail">Email order</button>
         </div>
         <div class="muted" id="submitStatus" style="margin-top:6px;">No payment collected here. Totals are estimates; final bill confirmed after weighing/inspection.</div>
       </section>
@@ -209,7 +210,7 @@
         minOrder: 30,
         promoCodes: { }
       },
-      backend: { submitUrl: "https://your-backend.example.com/api/orders" },
+      backend: { submitUrl: "", testMode: true, mailto: "orders@bubbl.example" },
       ui: { locale: "en-MY" }
     };
 
@@ -436,10 +437,38 @@
       const order = currentOrderJson();
       const status = q('#submitStatus');
       status.textContent = 'Submitting order…';
+
+      // --- Demo/Test mode: no backend set ---
+      if(!CONFIG.backend.submitUrl || CONFIG.backend.testMode){
+        // simulate success, save locally and offer download/email
+        const id = 'local-' + Date.now();
+        const orders = JSON.parse(localStorage.getItem('bubbl_orders')||'[]');
+        orders.push({ id, ...order });
+        localStorage.setItem('bubbl_orders', JSON.stringify(orders));
+        status.innerHTML = `✅ Order captured (test mode). Reference: <span class="pill">${id}</span>. Use Download/Email to process.`;
+        makeDownload(order, id);
+        setupEmail(order, id);
+        return;
+      }
+
       try{
         const res = await fetch(CONFIG.backend.submitUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(order),
+          // You may need credentials or auth headers depending on your backend.
+        });
+        if(!res.ok) throw new Error('HTTP ' + res.status + ' — check CORS, URL, and auth');
+        const data = await res.json().catch(()=>({ ok:true }));
+        status.innerHTML = `✅ Order submitted. Reference: <span class="pill">${(data.id||data.ref||'pending')}</span>`;
+      }catch(err){
+        console.error(err);
+        status.innerHTML = `❌ Could not submit. <span class="muted">(${err.message||'Network error'})</span> — saved locally; you can Download or Email it.`;
+        const id = 'failed-' + Date.now();
+        makeDownload(order, id);
+        setupEmail(order, id);
+      }
+    },
           body: JSON.stringify(order)
         });
         if(!res.ok) throw new Error('Server responded ' + res.status);
@@ -458,6 +487,45 @@
       });
     }
 
+    function makeDownload(order, id){
+      // create a one-time download link for the order JSON
+      const blob = new Blob([JSON.stringify({id, ...order}, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      let dl = document.getElementById('orderDownload');
+      if(!dl){
+        dl = document.createElement('a');
+        dl.id = 'orderDownload';
+        dl.className = 'btn secondary';
+        dl.style.marginLeft = '8px';
+        dl.textContent = 'Download order.json';
+        document.querySelector('.row button#btnSubmit').parentElement.appendChild(dl);
+      }
+      dl.href = url;
+      dl.download = `order-${id}.json`;
+    }
+
+    function setupEmail(order, id){
+      // Prefill a simple mailto link with compact summary
+      const summary = [
+        `Order ${id} — ${CONFIG.business.name}`,
+        `Name: ${order.customer.name}`,
+        `Phone: ${order.customer.phone}`,
+        `Address: ${order.customer.address}`,
+        `When: ${order.customer.pickupAt}`,
+        `Service: ${order.service}`,
+        `Total: ${order.summary.symbol}${order.summary.total}`,
+      ].join('
+');
+      const body = encodeURIComponent(summary + '
+
+JSON:
+' + JSON.stringify(order));
+      const mailto = `mailto:${CONFIG.backend.mailto}?subject=${encodeURIComponent('New order ' + id)}&body=${body}`;
+      const btn = q('#btnEmail');
+      if(btn){ btn.onclick = ()=>{ window.location.href = mailto; }; }
+    });
+    }
+
     function bindEvents(){
       q('#btnSearch').onclick = ()=> geocode(q('#search').value);
       q('#search').addEventListener('keydown', e=>{ if(e.key==='Enter'){ geocode(q('#search').value); }});
@@ -474,6 +542,7 @@
       q('#fragile').onchange = recalc;
       q('#btnSubmit').onclick = submitOrder;
       q('#btnCopyJson').onclick = copyOrderJson;
+      q('#btnEmail').onclick = ()=> setupEmail(currentOrderJson(), 'draft-'+Date.now());
       q('#addItem').onclick = ()=>{
         const name = prompt('Item name (e.g., Blanket)');
         if(!name) return;
